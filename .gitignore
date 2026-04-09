@@ -1,0 +1,12 @@
+# Drafts
+README_RUST_DRAFT.md
+variance-contravariance-covariance-kotlin-java-rust.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
