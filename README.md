@@ -427,7 +427,7 @@ These are all "producers" — you read values out of them. Same as Kotlin's `out
 
 ### Contravariance in Rust
 
-In Kotlin, `in T` means "I only consume T." In Rust, contravariance appears in exactly **one place**: function parameter types.
+In Kotlin, `in T` means "I only consume T." In Rust, contravariance primarily appears in **function parameter types** (and in `PhantomData<fn(T)>`, which derives from this).
 
 ```rust
 // fn(T) is contravariant over T.
@@ -449,6 +449,8 @@ fn demo() {
     needs_static_handler(handle_any); // ✅ Contravariance!
 }
 ```
+
+> **Note:** Under the hood, `handle_any` has type `for<'a> fn(&'a str)` (a higher-ranked type due to lifetime elision). The coercion to `fn(&'static str)` works through higher-ranked subtyping — the universally quantified lifetime can be instantiated to `'static`. This is contravariance applied through HRTB elaboration rather than between two concrete lifetimes.
 
 This is the same intuition as Kotlin's `in` or Java's `? super`: a function that handles the broader type can substitute for one that handles the narrower type. A vet who treats all animals can treat your cat.
 
@@ -514,7 +516,7 @@ Other invariant types: `Cell<T>`, `RefCell<T>`, `UnsafeCell<T>`, `*mut T`. They'
 | Write-only → contravariant | `? super T` | `in T` | Automatic (only in `fn(T)` params) |
 | Read + write → invariant | Plain `T` | No modifier | Automatic (compiler sees mutation) |
 
-The big difference: **in Java you write wildcards, in Kotlin you write `out`/`in`, in Rust the compiler figures it out.** You never declare variance explicitly in Rust — the compiler derives it from how your type parameters are used in struct fields.
+The big difference: **in Java you write wildcards, in Kotlin you write `out`/`in`, in Rust the compiler figures it out.** You rarely need to declare variance explicitly in Rust — the compiler derives it from how your type parameters are used in struct fields (though `PhantomData` is a form of explicit variance annotation, as shown below).
 
 ### PhantomData: Manual Variance Control
 
