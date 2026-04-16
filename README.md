@@ -6,11 +6,15 @@
 
 ## How to Read This Guide
 
-This guide is structured as a journey through two languages, in a deliberate order:
+This guide is structured as a journey through three languages, in a very deliberate order:
 
 1. **Java** — where generics and variance were first bolted onto the language. Java is where the *problem* originates. Arrays were made covariant (a mistake that causes runtime crashes), and then generics were added with wildcards (`? extends`, `? super`) that work but are famously ugly and confusing. We start here because understanding *what went wrong* is the fastest way to understand *what variance is*.
 
 2. **Kotlin** — where the same JVM generics system was given a beautiful, clean syntax. Kotlin's `out` and `in` keywords are so intuitive that they make variance feel obvious. Once you see Kotlin's approach, you'll wonder why Java made it so hard. If you already know Java generics, Kotlin will feel like the "aha!" moment.
+
+3. **Rust** *(The Frontier)* — where variance exists but works in a completely different way. Rust has no class inheritance. There's no `Cat extends Animal`. Instead, variance is about *lifetimes* — and the compiler figures it all out automatically. This section is your next challenge after you're comfortable with Java and Kotlin.
+
+**Recommendation:** Read Java and Kotlin first. Make sure you're comfortable with those. Then tackle Rust — it'll make much more sense with that foundation.
 
 ---
 
@@ -28,8 +32,17 @@ This guide is structured as a journey through two languages, in a deliberate ord
   - [No Modifier = Invariant = "I Do Both"](#no-modifier--invariant--i-do-both)
   - [Declaration-Site vs Use-Site: Why Kotlin Is Cleaner](#declaration-site-vs-use-site-why-kotlin-is-cleaner)
   - [Kotlin's Standard Library Got It Right](#kotlins-standard-library-got-it-right)
-- [Cheat Sheet: Java & Kotlin Side by Side](#cheat-sheet-java--kotlin-side-by-side)
-- [Part 3: Rust — The Frontier (Coming Soon)](#part-3-rust--the-frontier-coming-soon)
+- [Part 3: Rust — The Frontier (Your Next Challenge)](#part-3-rust--the-frontier-your-next-challenge)
+  - [The Big Twist: Lifetimes, Not Inheritance](#the-big-twist-lifetimes-not-inheritance)
+  - [Covariance in Rust](#covariance-in-rust)
+  - [Contravariance in Rust](#contravariance-in-rust)
+  - [Invariance in Rust: Why &mut T Is the Key to Everything](#invariance-in-rust-why-mut-t-is-the-key-to-everything)
+  - [The Complete Rust Variance Table](#the-complete-rust-variance-table)
+  - [PhantomData: Manual Variance Control](#phantomdata-manual-variance-control)
+  - [How Struct Variance Is Determined](#how-struct-variance-is-determined)
+  - [Trait Objects and Variance](#trait-objects-and-variance)
+  - [Common Lifetime Errors Caused by Variance](#common-lifetime-errors-caused-by-variance)
+- [Cheat Sheet: All Three Languages Side by Side](#cheat-sheet-all-three-languages-side-by-side)
 - [Further Reading](#further-reading)
 
 ---
@@ -68,7 +81,7 @@ If you have a cage of cats, can you treat it as a cage of animals?
 
 > This is **invariance**. When you can both read and write, you can't substitute at all.
 
-**These three scenarios are the entire concept of variance.** Everything in this guide is just how Java and Kotlin implement these three rules.
+**These three scenarios are the entire concept of variance.** Everything in this guide is just how Java, Kotlin, and Rust implement these three rules.
 
 ### Why Does This Matter?
 
@@ -201,7 +214,7 @@ void swap(List<Animal> list, int i, int j) {
 }
 ```
 
-PECS is the single most useful thing to remember from Java generics. And as you'll see, it maps directly to Kotlin's `out`/`in`.
+PECS is the single most useful thing to remember from Java generics. And as you'll see, it maps directly to Kotlin's `out`/`in` and even to Rust's variance rules.
 
 #### A Note on Type Erasure
 
@@ -346,19 +359,326 @@ Compare this to Java, where you'd need wildcards at every usage site. Kotlin's a
 - `in` = "only goes in" = safe to treat as narrower type = contravariant
 - nothing = "goes both ways" = no substitution = invariant
 
-If you've understood Java's PECS, Kotlin's `out`/`in` is the same thing with cleaner syntax.
+If you've understood Java's PECS, Kotlin's `out`/`in` is the same thing with cleaner syntax. And if you understand Kotlin's `out`/`in`, you have the perfect foundation for understanding Rust.
 
 ---
 
-## Cheat Sheet: Java & Kotlin Side by Side
+## Part 3: Rust — The Frontier (Your Next Challenge)
+
+> **Prerequisites:** Make sure you're comfortable with Java's PECS or Kotlin's `out`/`in` before reading this section. The concepts are identical — Rust just applies them to something very different.
+
+Everything you learned about variance in Java and Kotlin still applies in Rust. The same three rules. The same intuition about reading vs writing. But there's one fundamental difference that changes everything.
+
+### The Big Twist: Lifetimes, Not Inheritance
+
+In Java and Kotlin, subtyping comes from **inheritance**:
+
+```kotlin
+open class Animal
+class Cat : Animal()
+// Cat is a subtype of Animal
+```
+
+Rust has no class-based inheritance. There is no `Cat extends Animal`. Rust uses traits for polymorphism, but trait implementations don't create subtype relationships the way class inheritance does in Java or Kotlin. Instead, Rust's subtyping is about **lifetimes**:
+
+```rust
+// 'long: 'short means 'long outlives 'short
+// Therefore 'long is a SUBTYPE of 'short
+```
+
+Wait — a *longer* lifetime is a subtype of a *shorter* one?
+
+**Yes.** Remember, "subtype" means "can be used in place of." A reference that lives for 10 seconds can be used where a reference that lives for 5 seconds is expected. The longer-lived reference is *more specific* (it makes a stronger guarantee), so it's the subtype.
+
+Think of it like contracts: a loan guarantee valid for 10 years is strictly better than one valid for 5 years. Anyone who needs a "5-year guarantee" will accept a "10-year guarantee" — because it covers everything the 5-year one does and more. That's why the longer (more specific) lifetime is the subtype.
+
+Think of it this way:
+
+| In Java/Kotlin | In Rust |
+|---|---|
+| `Animal` (general, supertype) | `'short` (shorter lifetime, less specific) |
+| `Cat` (specific, subtype) | `'long` (longer lifetime, more specific) |
+| `Cat extends Animal` | `'long: 'short` |
+
+Once you make this mental substitution, **every variance rule you already know applies identically in Rust.** The only difference is what "subtype" means.
+
+### Covariance in Rust
+
+Just like Kotlin's `List<out E>`, Rust has types that are covariant — you can substitute a more specific (longer-lived) type where a less specific (shorter-lived) one is expected.
+
+```rust
+// &'a T is covariant over 'a.
+// If 'long: 'short, then &'long str can be used as &'short str.
+
+fn example<'long, 'short>(x: &'long str)
+where
+    'long: 'short,
+{
+    let y: &'short str = x; // ✅ Covariance!
+    // A reference that lives longer can be "downgraded"
+    // to one that lives shorter. Totally safe — the data
+    // will still be alive when the shorter reference expires.
+}
+```
+
+Covariant types in Rust: `&'a T`, `Box<T>`, `Vec<T>`, `Option<T>`, `[T]`, `[T; n]`, `*const T`.
+
+These are all "producers" — you read values out of them. Same as Kotlin's `out`, same as Java's `? extends`.
+
+### Contravariance in Rust
+
+In Kotlin, `in T` means "I only consume T." In Rust, contravariance appears in exactly **one place**: function parameter types.
+
+```rust
+// fn(T) is contravariant over T.
+// If 'long: 'short, then fn(&'short str) <: fn(&'long str)
+// The direction REVERSES!
+
+fn handle_any(s: &str) {
+    println!("{}", s);
+}
+
+fn needs_static_handler(f: fn(&'static str)) {
+    f("this string lives forever");
+}
+
+fn demo() {
+    // handle_any accepts ANY lifetime (short or long).
+    // needs_static_handler wants a function for 'static refs.
+    // handle_any is "wider" — it can certainly handle 'static.
+    needs_static_handler(handle_any); // ✅ Contravariance!
+}
+```
+
+This is the same intuition as Kotlin's `in` or Java's `? super`: a function that handles the broader type can substitute for one that handles the narrower type. A vet who treats all animals can treat your cat.
+
+### Invariance in Rust: Why `&mut T` Is the Key to Everything
+
+This is the most important variance rule in Rust. It's why Rust is memory-safe without a garbage collector.
+
+`&mut T` is **invariant** over `T`. You cannot substitute `&mut &'long str` for `&mut &'short str`, even though `&'long str` is a subtype of `&'short str`.
+
+Why? The exact same reason as Java's invariant generics and Kotlin's `MutableList`. **If you can both read and write, substitution is unsafe.**
+
+Here's the proof — imagine `&mut T` were covariant:
+
+```rust
+fn this_would_be_a_disaster() {
+    let mut forever: &str = "I live forever"; // 'static lifetime
+
+    let smuggled: &str = {
+        let mut ref_to_forever: &mut &str = &mut forever;
+
+        // IF &mut T were covariant, we could do this:
+        // Treat &mut &'static str as &mut &'short str
+        // Then write a short-lived reference through it:
+
+        let temp = String::from("I die soon");
+        // *ref_to_forever = &temp;  // Write a short-lived ref!
+
+        forever // Still claims to be 'static!
+    };
+    // temp is dropped here.
+    // smuggled now points to freed memory.
+    // println!("{}", smuggled); // 💥 USE-AFTER-FREE!
+}
+```
+
+Because `&mut T` is invariant, the compiler prevents this at compile time. **Zero runtime cost. No garbage collector. No runtime checks.** This is the core of Rust's memory safety guarantee.
+
+Other invariant types: `Cell<T>`, `RefCell<T>`, `UnsafeCell<T>`, `*mut T`. They're all invariant because they all allow mutation.
+
+### The Complete Rust Variance Table
+
+| Type | Variance over `'a` | Variance over `T` |
+|---|---|---|
+| `&'a T` | covariant | covariant |
+| `&'a mut T` | covariant | **invariant** |
+| `Box<T>` | — | covariant |
+| `Vec<T>` | — | covariant |
+| `Option<T>` | — | covariant |
+| `[T]` and `[T; n]` | — | covariant |
+| `*const T` | — | covariant |
+| `*mut T` | — | **invariant** |
+| `Cell<T>` | — | **invariant** |
+| `RefCell<T>` | — | **invariant** |
+| `UnsafeCell<T>` | — | **invariant** |
+| `fn(T) -> U` | — | **contra** (T) / co (U) |
+| `dyn Trait<T> + 'a` | covariant | **invariant** |
+
+**The rules are the same as Java/Kotlin, just expressed differently:**
+
+| Rule | Java | Kotlin | Rust |
+|---|---|---|---|
+| Read-only → covariant | `? extends T` | `out T` | Automatic (compiler sees read-only usage) |
+| Write-only → contravariant | `? super T` | `in T` | Automatic (only in `fn(T)` params) |
+| Read + write → invariant | Plain `T` | No modifier | Automatic (compiler sees mutation) |
+
+The big difference: **in Java you write wildcards, in Kotlin you write `out`/`in`, in Rust the compiler figures it out.** You never declare variance explicitly in Rust — the compiler derives it from how your type parameters are used in struct fields.
+
+### PhantomData: Manual Variance Control
+
+Sometimes you have a type parameter that doesn't appear in any field (common with raw pointers and FFI). The compiler doesn't know what variance to give it. `PhantomData` is how you tell it.
+
+```rust
+use std::marker::PhantomData;
+
+// T doesn't appear in any field — compiler doesn't know the variance
+struct JsonKey<V> {
+    raw: String,
+    _type: PhantomData<V>,  // "Pretend I hold a V" → covariant
+}
+
+// Different PhantomData types → different variance:
+PhantomData<T>            // covariant     (like Kotlin's out)
+PhantomData<fn(T)>        // contravariant (like Kotlin's in)
+PhantomData<fn(T) -> T>   // invariant     (like Kotlin's no modifier)
+```
+
+You'll mainly encounter this when writing unsafe code or reading library internals. For everyday Rust, you rarely need `PhantomData`.
+
+### How Struct Variance Is Determined
+
+When you write a custom struct, the compiler derives its variance from the fields. The rule is simple:
+
+```rust
+use std::cell::Cell;
+
+struct MyType<'a, A, B, C, D> {
+    a: &'a A,        // covariant over both 'a and A
+    b: &'a mut B,    // covariant over 'a, invariant over B
+    c: Cell<C>,      // invariant over C
+    d: fn(D) -> u32, // contravariant over D
+}
+// Result: MyType is covariant over 'a, but INVARIANT over A, B, C, and D
+```
+
+The rules:
+- **All covariant uses** → covariant over that parameter
+- **All contravariant uses** → contravariant over that parameter
+- **Mixed uses** → **invariant** (invariance wins all conflicts)
+
+If a type parameter appears in even one invariant field (like `Cell<T>` or `&mut T`), the entire struct becomes invariant over that parameter. This is how the compiler ensures your custom generic types are safe — you never declare variance explicitly, it's computed from your fields.
+
+### Trait Objects and Variance
+
+While traits don't create subtype hierarchies the way classes do, trait objects interact with variance through their lifetime bounds:
+
+```rust
+// Box<dyn Trait + 'a> is covariant over 'a.
+// A Box<dyn Display + 'static> can be used where Box<dyn Display + 'a> is expected,
+// because 'static outlives any 'a.
+
+fn print_it(item: Box<dyn std::fmt::Display + '_>) {
+    println!("{}", item);
+}
+
+fn demo() {
+    let s = String::from("hello");
+    let boxed: Box<dyn std::fmt::Display + 'static> = Box::new("static str");
+    print_it(boxed); // ✅ 'static coerces to shorter lifetime
+}
+```
+
+This is the same covariance you see with `&'a T` — longer lifetime substitutes for shorter.
+
+However, `dyn Trait<T>` is **invariant** over `T`. This means `Box<dyn Trait<Cat>>` is NOT a subtype of `Box<dyn Trait<Animal>>`, even if `Cat` were a subtype of `Animal`. The trait object's vtable is fixed at creation time — the compiler can't safely assume type parameter substitutability across trait objects.
+
+> **Note:** If you're writing unsafe code or FFI bindings, variance isn't always automatic. Raw pointers and `unsafe` blocks can create situations where the compiler's variance assumptions don't hold, requiring careful manual reasoning beyond just `PhantomData`.
+
+### Common Lifetime Errors Caused by Variance
+
+These are the real-world situations where variance will bite you in Rust.
+
+#### The "Same Lifetime Everywhere" Trap
+
+```rust
+// ❌ BAD: Same lifetime for the mutable borrow AND the contents
+struct Cache<'a> {
+    data: &'a mut Vec<&'a str>,
+}
+// &'a mut makes the Vec invariant over 'a.
+// But Vec<&'a str> needs 'a to be covariant.
+// Same 'a, conflicting requirements → weird borrow errors.
+
+// ✅ GOOD: Separate lifetimes
+struct Cache<'a, 'b> {
+    data: &'a mut Vec<&'b str>,
+}
+// Now 'a (the mutable borrow) and 'b (the string references)
+// are independent. No conflict.
+```
+
+#### General Debugging Strategy
+
+When you get a confusing lifetime error:
+
+1. **Is `&mut` involved?** If yes, remember it's invariant over `T`. The inner type's lifetime gets locked.
+2. **Is the same lifetime used twice?** Using `'a` in both `&'a mut` and `&'a T` can create conflicting requirements. Try splitting into `'a` and `'b`.
+3. **Consider owning the data.** Sometimes `.clone()` or `.to_owned()` is the right fix instead of fighting lifetimes.
+
+### Rust Variance at a Glance
+
+Everything in the Rust section, in one table. This is verified against the official [Rust Reference](https://doc.rust-lang.org/reference/subtyping.html) and [Rustonomicon](https://doc.rust-lang.org/nomicon/subtyping.html).
+
+| Type | Variance over `'a` | Variance over `T` | Why |
+|---|---|---|---|
+| `&'a T` | covariant | covariant | Read-only — safe to narrow |
+| `&'a mut T` | covariant | **invariant** | Mutation — must prevent lifetime smuggling |
+| `Box<T>` | — | covariant | Owned, no shared mutation |
+| `Vec<T>` | — | covariant | Owned, no shared mutation |
+| `Option<T>` | — | covariant | Wrapper, no mutation |
+| `[T]` / `[T; n]` | — | covariant | Sequences, same as `Vec<T>` |
+| `*const T` | — | covariant | Read-only raw pointer |
+| `*mut T` | — | **invariant** | Mutable raw pointer |
+| `Cell<T>` | — | **invariant** | Interior mutability |
+| `RefCell<T>` | — | **invariant** | Interior mutability |
+| `UnsafeCell<T>` | — | **invariant** | Primitive interior mutability |
+| `fn(T) -> U` | — | **contra** (T) / co (U) | Parameters consumed, return produced |
+| `dyn Trait<T> + 'a` | covariant | **invariant** | Lifetime can flex, type param is fixed |
+
+**How variance is determined for your types:**
+
+| Your struct's field usage | Result | Analogy |
+|---|---|---|
+| All uses are covariant | **Covariant** | Like Kotlin's `out` |
+| All uses are contravariant | **Contravariant** | Like Kotlin's `in` |
+| Mixed, or any invariant field | **Invariant** | Like Kotlin's no modifier |
+
+**PhantomData patterns for manual control:**
+
+| PhantomData type | Variance | Kotlin equivalent |
+|---|---|---|
+| `PhantomData<T>` | Covariant | `out T` |
+| `PhantomData<fn(T)>` | Contravariant | `in T` |
+| `PhantomData<fn(T) -> T>` | Invariant | `T` (no modifier) |
+
+> **Beyond this guide:** Rust's variance system also includes advanced topics like higher-ranked lifetime subtyping (`for<'a>`) and `NonNull<T>` covariance patterns. These are primarily relevant for unsafe code and collection implementations. See the sources below for the complete specification.
+
+*All Rust examples compile on stable Rust (2021 edition and later). No nightly features required. See `variance_examples.rs` to run them yourself.*
+
+### Sources
+
+This guide's Rust section was verified against the following authoritative references:
+
+- [**The Rustonomicon: Subtyping and Variance**](https://doc.rust-lang.org/nomicon/subtyping.html) — The official unsafe Rust guide's chapter on variance. Covers the variance table, subtyping rules, and the `&mut T` invariance proof.
+- [**The Rust Reference: Subtyping and Variance**](https://doc.rust-lang.org/reference/subtyping.html) — The language specification's variance table, including `[T]`, `[T; n]`, `dyn Trait<T> + 'a`, and higher-ranked lifetime rules.
+- [**RFC 0738: Variance**](https://rust-lang.github.io/rfcs/0738-variance.html) — The original RFC that defined Rust's variance inference system and struct composition rules.
+- [**Learning Rust With Entirely Too Many Linked Lists: Variance**](https://rust-unofficial.github.io/too-many-lists/sixth-variance.html) — Practical variance examples including `NonNull<T>` covariance patterns and `PhantomData` usage in collection implementations.
+- [**"Blindsided by Rust's Subtyping and Variance" (NullDeref)**](https://nullderef.com/blog/rust-variance/) — Real-world case study of variance-induced bugs, trait-induced invariance, and debugging strategies.
+- [**"Variance: Best Perspective of Understanding Lifetime in Rust" (DEV Community)**](https://dev.to/arichy/variance-best-perspective-of-understanding-lifetime-in-rust-m84) — Variance framed through read/write data flow, with practical lifetime examples.
+
+---
+
+## Cheat Sheet: All Three Languages Side by Side
 
 ### The Three Types of Variance
 
-| Variance | Meaning | Java | Kotlin |
-|---|---|---|---|
-| **Covariant** | Cat-container → Animal-container | `? extends T` | `out T` |
-| **Contravariant** | Animal-handler → Cat-handler | `? super T` | `in T` |
-| **Invariant** | No relationship | `T` (default) | `T` (default) |
+| Variance | Meaning | Java | Kotlin | Rust |
+|---|---|---|---|---|
+| **Covariant** | Cat-container → Animal-container | `? extends T` | `out T` | `&T`, `Box<T>` (auto) |
+| **Contravariant** | Animal-handler → Cat-handler | `? super T` | `in T` | `fn(T)` (auto) |
+| **Invariant** | No relationship | `T` (default) | `T` (default) | `&mut T`, `Cell<T>` (auto) |
 
 ### When Is Each Safe?
 
@@ -370,10 +690,18 @@ If you've understood Java's PECS, Kotlin's `out`/`in` is the same thing with cle
 
 ### PECS Across Languages
 
-| Mnemonic | Java | Kotlin |
+| Mnemonic | Java | Kotlin | Rust |
+|---|---|---|---|
+| **P**roducer **E**xtends | `List<? extends Animal>` | `List<out Animal>` | `Vec<&'short str>` accepting `Vec<&'long str>` |
+| **C**onsumer **S**uper | `Comparator<? super Cat>` | `Handler<in Cat>` | `fn(&'short str)` used as `fn(&'long str)` |
+
+### What "Subtype" Means in Each Language
+
+| Language | Subtype means... | Example |
 |---|---|---|
-| **P**roducer **E**xtends | `List<? extends Animal>` | `List<out Animal>` |
-| **C**onsumer **S**uper | `Comparator<? super Cat>` | `Handler<in Cat>` |
+| Java | Inherits from | `Cat extends Animal` |
+| Kotlin | Inherits from | `Cat : Animal()` |
+| Rust | **Outlives** | `'long: 'short` (longer lifetime is the subtype) |
 
 ### Key Mistakes to Avoid
 
@@ -382,21 +710,7 @@ If you've understood Java's PECS, Kotlin's `out`/`in` is the same thing with cle
 | Java | Covariant arrays: `Animal[] a = new Cat[3]` | 💥 Runtime `ArrayStoreException` |
 | Java | Forgetting PECS: using `List<Animal>` where `List<? extends Animal>` is needed | ❌ Compile error (but misleading) |
 | Kotlin | Trying to add `out` to a type that reads AND writes | ❌ Compile error (Kotlin catches it) |
-
----
-
-## Part 3: Rust — The Frontier (Coming Soon)
-
-Rust applies variance to **lifetimes** instead of class inheritance — and the compiler figures it all out automatically. No `out`, no `in`, no wildcards.
-
-Topics coming:
-- Lifetimes as subtyping (`'long: 'short`)
-- Why `&mut T` is invariant (and why that's the key to memory safety)
-- `PhantomData` for manual variance control
-- The complete Rust variance table
-- Common lifetime errors caused by variance
-
-Stay tuned.
+| Rust | Using the same lifetime for `&'a mut` and inner `&'a` references | ❌ Confusing borrow checker errors |
 
 ---
 
@@ -410,6 +724,10 @@ Stay tuned.
 - [Kotlin Docs: Generics — Variance](https://kotlinlang.org/docs/generics.html)
 - Kotlin in Action by Dmitry Jemerov & Svetlana Isakova — Chapter 9
 
+**Rust:**
+- [The Rustonomicon: Subtyping and Variance](https://doc.rust-lang.org/nomicon/subtyping.html)
+- [Rust Reference: Variance](https://doc.rust-lang.org/reference/subtyping.html)
+
 ---
 
-*This guide is structured for developers coming from Java or Kotlin who want to understand generic variance. Rust coverage is coming soon.*
+*This guide is structured for developers coming from Java or Kotlin who want to understand Rust's approach to variance. Start with what you know, then explore the frontier.*
